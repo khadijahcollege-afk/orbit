@@ -19,8 +19,8 @@ export default function Daftar() {
     setBusy(true)
     try {
       await api('/auth/register', { method: 'POST', body: form })
-      await signIn(form.email.trim(), form.password)
-      router.replace('/(tabs)')
+      const me = await signIn(form.email.trim(), form.password)
+      router.replace(me.onboarded_at ? '/(tabs)' : '/onboarding')
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Gagal mendaftar — periksa koneksi')
     } finally {

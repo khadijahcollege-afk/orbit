@@ -1,12 +1,15 @@
 /* Bottom navigation mobile (blueprint docs/03): Home, Inbox, Capture, Timeline, Assistant. */
-import { Tabs } from 'expo-router'
+import { Tabs, Redirect } from 'expo-router'
 import { Home, Inbox, Camera, CalendarTimeline, Sparkles } from '@/components/icons'
 import { Guard } from '@/components/guard'
+import { useAuth } from '@/lib/auth'
 import { colors } from '@/lib/theme'
 
 export default function TabsLayout() {
+  const { me } = useAuth()
   return (
     <Guard>
+      {me && !me.onboarded_at ? <Redirect href="/onboarding" /> : null}
       <Tabs
         screenOptions={{
           headerShown: false,

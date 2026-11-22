@@ -17,6 +17,7 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="masuk" />
         <Stack.Screen name="daftar" />
+        <Stack.Screen name="onboarding" />
         <Stack.Screen name="akun" />
       </Stack>
     </AuthProvider>

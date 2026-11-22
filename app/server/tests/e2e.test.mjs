@@ -151,6 +151,7 @@ test('onboarding: pengguna baru belum onboarded → pilih timezone → tersimpan
   assert.ok(done.data.onboarded_at, 'onboarded_at terisi')
   const after = await call('/users/me', { token: S.B.token, status: 200 })
   assert.equal(after.data.onboarded_at, done.data.onboarded_at)
+  assert.equal(after.data.notification_optin, true, 'optin notifikasi tersimpan')
 })
 
 test('billing mock: checkout → paid → Plus aktif +30 hari; webhook palsu 403; repeat 409', async () => {

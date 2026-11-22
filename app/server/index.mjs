@@ -28,6 +28,7 @@ import {
 } from './auth.mjs'
 import { withFallback, getProvider, getCooldowns } from './ai/index.mjs'
 import { activeProvider, createCheckout, verifyMidtransSignature, midtransStatusToOrder } from './payments.mjs'
+import { captureError } from './telemetry.mjs'
 import { hybridSearch, processDocument } from './pipeline.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -63,6 +64,8 @@ function fail(res, err) {
     json(res, err.status, { error: { code: err.code, message: err.message, ...err.extra } })
   } else {
     console.error(err)
+    // Error tracking (checklist docs/08): hanya 5xx internal — no-op tanpa SENTRY_DSN.
+    captureError(err, { component: 'http', path: res.req?.url })
     json(res, 500, { error: { code: 'internal_error', message: 'Kesalahan server', request_id: uuid() } })
   }
 }
@@ -253,7 +256,7 @@ route(/^\/api\/v1\/auth\/login$/, async (req, res) => {
   }
   const session = createSession(user.id)
   const ws = db.prepare('SELECT workspace_id FROM workspace_members WHERE user_id = ? LIMIT 1').get(user.id)
-  json(res, 200, { token: session.token, expires_at: session.expires_at, user: { id: user.id, email: user.email, full_name: user.full_name, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null }, workspace_id: ws?.workspace_id })
+  json(res, 200, { token: session.token, expires_at: session.expires_at, user: { id: user.id, email: user.email, full_name: user.full_name, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null, notification_optin: user.notification_optin === 1 }, workspace_id: ws?.workspace_id })
 })
 
 route(/^\/api\/v1\/auth\/logout$/, async (req, res) => {
@@ -267,7 +270,7 @@ route(/^\/api\/v1\/users\/me$/, async (req, res) => {
   const user = requireUser(req)
   if (req.method === 'GET') {
     const ws = db.prepare('SELECT workspace_id FROM workspace_members WHERE user_id = ? LIMIT 1').get(user.id)
-    json(res, 200, { id: user.id, email: user.email, full_name: user.full_name, avatar_url: null, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null, workspace_id: ws?.workspace_id })
+    json(res, 200, { id: user.id, email: user.email, full_name: user.full_name, avatar_url: null, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null, notification_optin: user.notification_optin === 1, workspace_id: ws?.workspace_id })
     return
   }
   if (req.method === 'PATCH') {
@@ -291,7 +294,7 @@ route(/^\/api\/v1\/users\/me\/onboarding$/, async (req, res) => {
   if (!known.includes(tz)) throw new HttpError(400, 'validation_error', 'timezone tidak dikenal', { fields: { timezone: `salah satu dari: ${known.join(', ')}` } })
   const locale = ['id-ID', 'en'].includes(String(b.locale)) ? String(b.locale) : 'id-ID'
   const notif = b.notification_optin === true
-  db.prepare('UPDATE users SET timezone = ?, locale = ?, onboarded_at = ?, updated_at = ? WHERE id = ?').run(tz, locale, now(), now(), user.id)
+  db.prepare('UPDATE users SET timezone = ?, locale = ?, onboarded_at = ?, notification_optin = ?, updated_at = ? WHERE id = ?').run(tz, locale, now(), notif ? 1 : 0, now(), user.id)
   logActivity(null, user.id, 'account.onboarded', 'user', user.id, { timezone: tz, notification_optin: notif })
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)
   json(res, 200, { id: u.id, email: u.email, full_name: u.full_name, locale: u.locale, timezone: u.timezone, onboarded_at: u.onboarded_at, notification_optin: notif })

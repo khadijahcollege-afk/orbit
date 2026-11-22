@@ -20,8 +20,8 @@ export default function Masuk() {
     setErr('')
     setBusy(true)
     try {
-      await signIn(email.trim(), password)
-      router.replace('/(tabs)')
+      const me = await signIn(email.trim(), password)
+      router.replace(me.onboarded_at ? '/(tabs)' : '/onboarding')
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Gagal masuk — periksa koneksi ke server API')
     } finally {

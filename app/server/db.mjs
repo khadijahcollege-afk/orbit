@@ -250,6 +250,10 @@ CREATE TABLE IF NOT EXISTS billing_orders (
 if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'onboarded_at')) {
   db.exec(`ALTER TABLE users ADD COLUMN onboarded_at TEXT`)
 }
+/* Optin notifikasi (dari onboarding) — dipakai console untuk izin Notification. */
+if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'notification_optin')) {
+  db.exec(`ALTER TABLE users ADD COLUMN notification_optin INTEGER NOT NULL DEFAULT 0`)
+}
 
 /* Kanal umpan balik beta (docs/08 Operations: beta user feedback channel). */
 db.exec(`

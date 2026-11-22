@@ -7,7 +7,7 @@ interface AuthState {
   me: Me | null
   ws: string | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<void>
+  signIn: (email: string, password: string) => Promise<Me>
   signOut: () => Promise<void>
 }
 
@@ -47,7 +47,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         await tokenStore.set(r.token)
         setToken(r.token)
-        setMe({ ...r.user, workspace_id: r.workspace_id })
+        const user = { ...r.user, workspace_id: r.workspace_id }
+        setMe(user)
+        return user
       },
       async signOut() {
         try {

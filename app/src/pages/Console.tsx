@@ -1665,6 +1665,54 @@ export default function Console() {
       .catch(() => {})
   }, [auth])
 
+  // Pengingat lewat notifikasi browser (optin dari onboarding): polling 60s,
+  // pengingat berstatus 'sent' yang belum terlihat → Notification API.
+  useEffect(() => {
+    if (!auth) return
+    let stop = false
+    const SEEN_KEY = 'orbit_notif_seen'
+    const readSeen = (): string[] => {
+      try {
+        return JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')
+      } catch {
+        return []
+      }
+    }
+    const tick = async () => {
+      try {
+        const me = await api<{ notification_optin: boolean; workspace_id?: string }>('/users/me', { token: auth.token })
+        if (stop || !me.notification_optin || !me.workspace_id) return
+        if (typeof Notification === 'undefined') return
+        if (Notification.permission === 'default') {
+          const p = await Notification.requestPermission()
+          if (p !== 'granted') return
+        }
+        if (Notification.permission !== 'granted') return
+        const rem = await api<{ data: { id: string; title: string; status: string; scheduled_at: string }[] }>(
+          `/reminders?workspace_id=${me.workspace_id}`,
+          { token: auth.token },
+        )
+        const seen = new Set(readSeen())
+        const fresh = rem.data.filter(
+          (r) => r.status === 'sent' && Date.now() - new Date(r.scheduled_at).getTime() < 15 * 60_000 && !seen.has(r.id),
+        )
+        for (const r of fresh.slice(0, 3)) {
+          new Notification('ORBIT — pengingat', { body: r.title, tag: r.id })
+          seen.add(r.id)
+        }
+        if (fresh.length) localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-200)))
+      } catch {
+        /* polling ringan — abaikan kegagalan sementara */
+      }
+    }
+    void tick()
+    const t = setInterval(tick, 60_000)
+    return () => {
+      stop = true
+      clearInterval(t)
+    }
+  }, [auth])
+
   if (!auth) return <AuthScreen onAuthed={onAuthed} />
 
   return (
