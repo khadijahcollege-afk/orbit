@@ -12,7 +12,8 @@
     "test:load": "node server/tests/load.mjs",
     "metrics": "node server/metrics.mjs",
     "export:pg": "node server/export-pg.mjs",
-    "verify:pg": "node server/tests/pg-verify.mjs"
+    "verify:pg": "node server/tests/pg-verify.mjs",
+    "check": "npm run lint && npx tsc -b && npm test && npm run verify:pg && npm run build"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.17",

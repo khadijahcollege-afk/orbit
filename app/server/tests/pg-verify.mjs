@@ -10,6 +10,7 @@
      6. Uji perilaku RLS: pengguna A tidak melihat dokumen B
    Jalankan: node server/tests/pg-verify.mjs
    ============================================================ */
+import { execFileSync } from 'node:child_process'
 import { PGlite } from '@electric-sql/pglite'
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm'
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
@@ -193,10 +194,15 @@ try {
   ok('ALTER kolom MVP + tabel feedback')
 } catch (err) { die('ALTER MVP gagal', err) }
 
-/* 5. Impor dump terbaru dari npm run export:pg */
+/* 5. Regenerasi dump (data selalu segar) lalu impor */
+execFileSync(process.execPath, ['server/export-pg.mjs'], {
+  cwd: APP,
+  env: { ...process.env, ORBIT_DATA_DIR: DATA },
+  stdio: 'ignore',
+})
 const dumpDir = path.join(DATA, 'export')
 const dumps = existsSync(dumpDir) ? readdirSyncNewest(dumpDir) : []
-if (!dumps.length) die('tidak ada dump — jalankan dulu: npm run export:pg', '')
+if (!dumps.length) die('dump gagal dibuat', '')
 const dumpPath = dumps[0]
 const src = new DatabaseSync(path.join(DATA, 'orbit.db'), { readOnly: true })
 try {
