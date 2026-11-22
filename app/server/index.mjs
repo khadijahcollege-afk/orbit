@@ -573,6 +573,43 @@ route(/^\/api\/v1\/assistant\/chat$/, async (req, res) => {
   })
 })
 
+/* Riwayat percakapan assistant — dibaca kembali lintas sesi. */
+route(/^\/api\/v1\/assistant\/conversations$/, async (req, res, ctx) => {
+  const user = requireUser(req)
+  const wsId = requireWs(user, ctx.url)
+  if (req.method !== 'GET') throw new HttpError(405, 'validation_error', 'Method tidak didukung')
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.title, c.created_at,
+              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
+              (SELECT m.content FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS preview
+       FROM conversations c WHERE c.workspace_id = ?
+       ORDER BY c.created_at DESC LIMIT 20`,
+    )
+    .all(wsId)
+  json(res, 200, { data: rows.map((r) => ({ ...r, preview: (r.preview || '').slice(0, 140) })) })
+})
+
+route(/^\/api\/v1\/assistant\/conversations\/([0-9a-f-]{36})$/, async (req, res, ctx) => {
+  const user = requireUser(req)
+  const conv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(ctx.params[0])
+  if (!conv || !requireMembership(user.id, conv.workspace_id, 'viewer')) {
+    throw new HttpError(404, 'not_found', 'Percakapan tidak ada')
+  }
+  if (req.method !== 'GET') throw new HttpError(405, 'validation_error', 'Method tidak didukung')
+  const messages = db
+    .prepare('SELECT role, content, citations, metadata, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at')
+    .all(conv.id)
+    .map((m) => ({
+      role: m.role,
+      content: m.content,
+      citations: asJson(m.citations) || [],
+      insufficient_data: asJson(m.metadata)?.insufficient_data === true,
+      created_at: m.created_at,
+    }))
+  json(res, 200, { id: conv.id, title: conv.title, created_at: conv.created_at, messages })
+})
+
 /* ---- tasks / events / reminders ---- */
 route(/^\/api\/v1\/tasks$/, async (req, res, ctx) => {
   const user = requireUser(req)

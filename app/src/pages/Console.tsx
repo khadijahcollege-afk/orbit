@@ -621,10 +621,50 @@ interface ChatMsg {
   approvals?: { id: string; action_type: string; status: string }[]
 }
 
+interface ConversationSummary {
+  id: string
+  title: string
+  created_at: string
+  message_count: number
+  preview: string
+}
+
 function AssistantTab({ token, ws }: { token: string; ws: string }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [convId, setConvId] = useState<string | null>(null)
+  const [convs, setConvs] = useState<ConversationSummary[] | null>(null)
+
+  const loadConvs = useCallback(() => {
+    api<{ data: ConversationSummary[] }>(`/assistant/conversations?workspace_id=${ws}`, { token })
+      .then((d) => setConvs(d.data))
+      .catch(() => {})
+  }, [token, ws])
+
+  const openConv = useCallback(
+    async (id: string) => {
+      try {
+        const d = await api<{ id: string; messages: { role: string; content: string; citations: { document_id: string; title: string }[]; insufficient_data: boolean }[] }>(
+          `/assistant/conversations/${id}`,
+          { token },
+        )
+        setConvId(d.id)
+        setMsgs(
+          d.messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content, citations: m.citations, insufficient: m.insufficient_data })),
+        )
+      } catch {
+        /* biarkan tampilan sekarang */
+      }
+    },
+    [token],
+  )
+
+  useEffect(() => {
+    loadConvs()
+  }, [loadConvs])
 
   const send = async (e?: React.FormEvent) => {
     e?.preventDefault()
@@ -639,11 +679,14 @@ function AssistantTab({ token, ws }: { token: string; ws: string }) {
         insufficient_data: boolean
         citations: { document_id: string; title: string }[]
         approvals: { id: string; action_type: string; status: string }[]
+        conversation_id: string
       }>('/assistant/chat', {
         method: 'POST',
         token,
         body: JSON.stringify({ workspace_id: ws, message: text }),
       })
+      setConvId(out.conversation_id)
+      loadConvs()
       setMsgs((m) => [
         ...m,
         {
@@ -721,6 +764,33 @@ function AssistantTab({ token, ws }: { token: string; ws: string }) {
           </div>
         ))}
         {busy && <Loader2 className="mx-auto h-4 w-4 animate-spin text-muted-foreground" />}
+        {convs && convs.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
+            <span className="text-[10px] font-bold tracking-widest text-muted-foreground">RIWAYAT:</span>
+            {convs.slice(0, 6).map((c) => (
+              <button
+                key={c.id}
+                onClick={() => openConv(c.id)}
+                title={c.preview}
+                className={cn(
+                  'max-w-[180px] truncate rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                  c.id === convId ? 'border-primary/60 bg-primary/15 text-foreground' : 'border-border text-muted-foreground hover:bg-muted',
+                )}
+              >
+                {c.title || c.preview || 'Percakapan'}
+              </button>
+            ))}
+            <button
+              onClick={() => {
+                setMsgs([])
+                setConvId(null)
+              }}
+              className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+            >
+              + Baru
+            </button>
+          </div>
+        )}
       </div>
       <form onSubmit={send} className="flex gap-2">
         <input

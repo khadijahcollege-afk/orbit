@@ -1,6 +1,6 @@
 /* Assistant — RAG ber-sitasi dari API v1 (POST /assistant/chat).
    Jawaban berbasis data tersimpan; aksi yang diusulkan butuh approval di web. */
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View, ScrollView, type ScrollViewInstance } from 'react-native'
 import { Btn, Card, Field, Muted } from '@/components/ui'
 import { Send } from '@/components/icons'
@@ -22,6 +22,31 @@ export default function AssistantScreen() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const scrollRef = useRef<ScrollViewInstance | null>(null)
+  const convIdRef = useRef<string | null>(null)
+
+  // Riwayat: muat percakapan terakhir saat layar dibuka.
+  useEffect(() => {
+    if (!token || !me?.workspace_id) return
+    ;(async () => {
+      try {
+        const list = await api<{ data: { id: string; title: string }[] }>(`/assistant/conversations?workspace_id=${me.workspace_id}`, { token })
+        const latest = list.data[0]
+        if (!latest) return
+        const d = await api<{ id: string; messages: { role: string; content: string; citations: { title: string }[]; insufficient_data: boolean }[] }>(
+          `/assistant/conversations/${latest.id}`,
+          { token },
+        )
+        convIdRef.current = d.id
+        setTurns(
+          d.messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({ role: (m.role === 'user' ? 'user' : 'ai') as 'user' | 'ai', text: m.content, citations: m.citations as Turn['citations'], insufficient: m.insufficient_data })),
+        )
+      } catch {
+        /* mulai kosong bila riwayat gagal dimuat */
+      }
+    })()
+  }, [token, me?.workspace_id])
 
   const send = useCallback(async () => {
     const message = input.trim()
@@ -34,8 +59,9 @@ export default function AssistantScreen() {
       const r = await api<ChatAnswer>('/assistant/chat', {
         method: 'POST',
         token,
-        body: { workspace_id: me.workspace_id, message },
+        body: { workspace_id: me.workspace_id, message, conversation_id: convIdRef.current ?? undefined },
       })
+      convIdRef.current = r.conversation_id
       setTurns((t) => [...t, { role: 'ai', text: r.answer, citations: r.citations, insufficient: r.insufficient_data }])
       requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }))
     } catch (e) {

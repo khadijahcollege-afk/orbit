@@ -255,6 +255,19 @@ test('assistant: jawaban ber-sitasi + usulan pengingat → approval pending', as
   }
 })
 
+test('riwayat percakapan: daftar + baca ulang lintas sesi', async () => {
+  const list = await call(`/assistant/conversations?workspace_id=${S.A.ws}`, { token: S.A.token, status: 200 })
+  assert.ok(list.data.data.length >= 1, 'ada percakapan tersimpan')
+  const conv = list.data.data.find((c) => /tagihan/i.test(c.title || '')) || list.data.data[0]
+  assert.ok(conv.message_count >= 2, 'pesan tersimpan ≥2')
+  const full = await call(`/assistant/conversations/${conv.id}`, { token: S.A.token, status: 200 })
+  const roles = full.data.messages.map((m) => m.role)
+  assert.ok(roles.includes('user') && roles.includes('assistant'), 'peran lengkap')
+  assert.ok(full.data.messages.some((m) => m.role === 'assistant' && m.citations.length >= 1), 'sitasi ikut tersimpan')
+  // isolasi: pengguna lain tidak bisa membuka percakapan workspace A
+  await call(`/assistant/conversations/${conv.id}`, { token: S.B.token, status: 404 })
+})
+
 test('refusal: pertanyaan tanpa dasar → insufficient_data + tanpa sitasi', async () => {
   const r = await call('/assistant/chat', {
     method: 'POST',
