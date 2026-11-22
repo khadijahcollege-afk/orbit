@@ -1,10 +1,12 @@
 # Panduan Migrasi ke Supabase (PostgreSQL + RLS)
 
-> Prasyarat sudah disiapkan otomatis: skema Postgres ada di
-> `blueprint/ORBIT_Blueprint_v1/database/` (schema.sql + migrations 002, 003 +
-> policies/rls_full.sql — review v1.1), dan alat ekspor data lokal:
-> `cd app && npm run export:pg` → `server/data/export/orbit-pg-<stamp>.sql`
-> (341 baris dari DB demo; urutan FK aman, TRUNCATE CASCADE di depan → aman diulang).
+> Prasyarat sudah disiapkan otomatis dan **sudah diverifikasi dengan PostgreSQL nyata**
+> (embedded via `npm run verify:pg`, 13 langkah hijau: skema, migrasi, 55 kebijakan RLS,
+> impor dump, rekonsiliasi 21 tabel, isolasi antar pengguna):
+> - skema: `blueprint/ORBIT_Blueprint_v1/database/` (schema.sql + migrations 002, 003 + policies/rls_full.sql — **2 bug SQL v1 ditemukan & diperbaiki oleh verifikasi**: policy `document_entities` menunjuk kolom yang tidak ada, dan `NEW` dipakai di policy `messages` yang tak dikenali Postgres vanilla)
+> - alat ekspor data lokal: `cd app && npm run export:pg` → `server/data/export/orbit-pg-<stamp>.sql`
+>   (kolom difilter ke skema target + boolean dikonversi; ⚠ tiga kolom MVP disengaja dilewati: `documents.extraction`, `document_chunks.embedding`, `document_entities.confidence` — keputusan data-layer produksi, lihat Langkah 6)
+> - uji ulang kapan pun: `npm run verify:pg`
 
 ## Langkah 1 — Buat proyek Supabase
 1. https://supabase.com → New project.
@@ -31,8 +33,27 @@ schema.sql — tambahkan via SQL Editor:
 ```sql
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_optin BOOLEAN NOT NULL DEFAULT FALSE;
+-- kolom MVP yang tidak ada di skema blueprint (server membutuhkannya):
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS processing_error TEXT;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS confirmed BOOLEAN;
+ALTER TABLE ai_approvals ADD COLUMN IF NOT EXISTS execution_note TEXT;
+-- activity_logs MVP mencatat peristiwa tingkat akun (workspace NULL):
+ALTER TABLE activity_logs ALTER COLUMN workspace_id DROP NOT NULL;
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS exports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('queued','processing','ready','failed')),
+  payload JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS feedback (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -40,6 +61,20 @@ CREATE TABLE IF NOT EXISTS feedback (
   context TEXT,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','reviewed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS billing_orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id),
+  plan_id TEXT NOT NULL REFERENCES plans(id),
+  amount_idr INTEGER NOT NULL CHECK (amount_idr > 0),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','failed','cancelled','expired')),
+  provider TEXT NOT NULL DEFAULT 'mock' CHECK (provider IN ('mock','midtrans')),
+  provider_ref TEXT,
+  checkout_url TEXT,
+  paid_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 

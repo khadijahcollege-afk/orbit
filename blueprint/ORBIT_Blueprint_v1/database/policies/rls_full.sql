@@ -136,12 +136,23 @@ CREATE POLICY "entities update" ON entities FOR UPDATE
 CREATE POLICY "entities delete" ON entities FOR DELETE
   USING (public.orbit_can_access(workspace_id, 'member'));
 
+-- Catatan review v1.1 (hasil verifikasi pg-verify): document_entities adalah
+-- tabel join tanpa kolom workspace_id — kebijakan melewati documents.
 CREATE POLICY "doc_entities read" ON document_entities FOR SELECT
-  USING (public.orbit_can_access(workspace_id, 'viewer'));
+  USING (EXISTS (
+    SELECT 1 FROM documents d
+    WHERE d.id = document_id AND public.orbit_can_access(d.workspace_id, 'viewer')
+  ));
 CREATE POLICY "doc_entities insert" ON document_entities FOR INSERT
-  WITH CHECK (public.orbit_can_access(workspace_id, 'member'));
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM documents d
+    WHERE d.id = document_id AND public.orbit_can_access(d.workspace_id, 'member')
+  ));
 CREATE POLICY "doc_entities delete" ON document_entities FOR DELETE
-  USING (public.orbit_can_access(workspace_id, 'member'));
+  USING (EXISTS (
+    SELECT 1 FROM documents d
+    WHERE d.id = document_id AND public.orbit_can_access(d.workspace_id, 'member')
+  ));
 
 CREATE POLICY "events read" ON events FOR SELECT
   USING (public.orbit_can_access(workspace_id, 'viewer'));
@@ -203,10 +214,13 @@ CREATE POLICY "messages read via conversation" ON messages FOR SELECT
 
 CREATE POLICY "members insert user messages" ON messages FOR INSERT
   WITH CHECK (
-    NEW.role = 'user'
+    -- Catatan review v1.1 (hasil verifikasi pg-verify): Postgres vanilla tidak
+    -- mengenali NEW di ekspresi policy (itu fitur RULES) — untuk INSERT WITH
+    -- CHECK, referensi kolom polos sudah merujuk baris yang disisipkan.
+    role = 'user'
     AND EXISTS (
       SELECT 1 FROM conversations c
-      WHERE c.id = NEW.conversation_id
+      WHERE c.id = conversation_id
         AND public.orbit_can_access(c.workspace_id, 'member')
     )
   );

@@ -11,9 +11,11 @@
     "test": "node --test server/tests/e2e.test.mjs",
     "test:load": "node server/tests/load.mjs",
     "metrics": "node server/metrics.mjs",
-    "export:pg": "node server/export-pg.mjs"
+    "export:pg": "node server/export-pg.mjs",
+    "verify:pg": "node server/tests/pg-verify.mjs"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.17",
     "@fontsource/bebas-neue": "^5.0.0",
     "@fontsource/dm-sans": "^5.0.0",
     "@fontsource/inter": "^5.0.0",

@@ -52,16 +52,35 @@ const pgValue = (v) => {
   return `'${String(v).replaceAll("'", "''")}'`
 }
 
-/* --- validasi kolom vs blueprint schema.sql (klaim "mirror skema") --- */
-const schemaCols = new Map()
-if (existsSync(blueprintSchema)) {
-  const sql = readFileSync(blueprintSchema, 'utf8')
-  for (const m of sql.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)\s*\(([^;]+?)\n\);/gs)) {
+/* --- kolom target: skema blueprint + tabel/kolom MVP terdokumentasi.
+     Sumber kebenaran = docs/supabase-migrasi.md (blok ALTER + DDL).
+     Kolom SQLite yang tidak ada di target DILEWATI dengan peringatan. --- */
+const schemaCols = new Map() // tabel → Map(kolom → tipe SQL target)
+for (const p of [blueprintSchema, path.resolve(here, '..', '..', 'blueprint', 'ORBIT_Blueprint_v1', 'database', 'migrations', '002_security_and_indexes.sql'), path.resolve(here, '..', '..', 'blueprint', 'ORBIT_Blueprint_v1', 'database', 'migrations', '003_hybrid_search_and_metering.sql')]) {
+  if (!existsSync(p)) continue
+  const sql = readFileSync(p, 'utf8')
+  for (const m of sql.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\w+)\s*\(([^;]+?)\n\);/gs)) {
     const name = m[1]
-    const cols = [...m[2].matchAll(/^\s{2}(\w+)\s+(TEXT|INTEGER|REAL|BOOLEAN|TIMESTAMPTZ|UUID|JSONB|BYTEA|DOUBLE PRECISION|BIGINT)/gm)].map((c) => c[1])
-    schemaCols.set(name, new Set(cols))
+    const cols = [...m[2].matchAll(/^\s{2}(\w+)\s+(TEXT|INTEGER|REAL|BOOLEAN|TIMESTAMPTZ|UUID|JSONB|BYTEA|DOUBLE PRECISION|BIGINT)/gm)].map((c) => [c[1], c[2]])
+    if (!schemaCols.has(name)) schemaCols.set(name, new Map(cols))
   }
 }
+/* Tabel tambahan MVP (DDL lengkap ada di panduan migrasi) */
+for (const [t, cols] of Object.entries({
+  sessions: [['token', 'TEXT'], ['user_id', 'UUID'], ['created_at', 'TIMESTAMPTZ'], ['expires_at', 'TIMESTAMPTZ']],
+  exports: [['id', 'UUID'], ['user_id', 'UUID'], ['status', 'TEXT'], ['payload', 'JSONB'], ['created_at', 'TIMESTAMPTZ']],
+  feedback: [['id', 'UUID'], ['user_id', 'UUID'], ['message', 'TEXT'], ['context', 'TEXT'], ['status', 'TEXT'], ['created_at', 'TIMESTAMPTZ']],
+  billing_orders: [['id', 'UUID'], ['workspace_id', 'UUID'], ['user_id', 'UUID'], ['plan_id', 'TEXT'], ['amount_idr', 'INTEGER'], ['status', 'TEXT'], ['provider', 'TEXT'], ['provider_ref', 'TEXT'], ['checkout_url', 'TEXT'], ['paid_at', 'TIMESTAMPTZ'], ['created_at', 'TIMESTAMPTZ'], ['updated_at', 'TIMESTAMPTZ']],
+})) schemaCols.set(t, new Map(cols))
+/* Kolom tambahan MVP pada tabel blueprint (wajib ada di blok ALTER panduan) */
+const MVP_ADDITIONS = {
+  users: [['password_hash', 'TEXT'], ['deleted_at', 'TIMESTAMPTZ'], ['onboarded_at', 'TIMESTAMPTZ'], ['notification_optin', 'BOOLEAN']],
+  documents: [['confirmed', 'BOOLEAN'], ['processing_error', 'TEXT']],
+  ai_approvals: [['execution_note', 'TEXT']],
+}
+for (const [t, cols] of Object.entries(MVP_ADDITIONS)) for (const [c, ty] of cols) schemaCols.get(t)?.set(c, ty)
+const BOOLEAN_TARGET = new Map()
+for (const [, cols] of schemaCols) for (const [c, ty] of cols) if (ty === 'BOOLEAN') BOOLEAN_TARGET.set(c, true)
 
 mkdirSync(outDir, { recursive: true })
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
@@ -84,9 +103,18 @@ for (const t of order) {
     const missing = cols.filter((c) => !schemaCols.get(t).has(c.name) && !['onboarded_at', 'notification_optin', 'confirmed', 'processing_error'].includes(c.name))
     if (missing.length) summary.push(`  ⚠ ${t}: kolom tidak ada di schema.sql: ${missing.map((c) => c.name).join(', ')}`)
   }
+  // emit hanya kolom yang dikenali skema target; sisanya dilewati + peringatan
+  const target = schemaCols.get(t) ?? new Set(cols.map((c) => c.name))
+  const emitted = cols.filter((c) => target.has(c.name))
+  const skipped = cols.filter((c) => !target.has(c.name))
+  if (skipped.length) summary.push(`  ⚠ ${t}: kolom dilewati (tidak di skema target): ${skipped.map((c) => c.name).join(', ')}`)
   for (const r of rows) {
-    const vals = cols.map((c) => pgValue(r[c.name]))
-    parts.push(`INSERT INTO ${t} (${cols.map((c) => c.name).join(', ')}) VALUES (${vals.join(', ')});`)
+    const vals = emitted.map((c) => {
+      let v = r[c.name]
+      if (BOOLEAN_TARGET.has(c.name) && (v === 0 || v === 1)) v = v === 1 // kolom boolean target
+      return pgValue(v)
+    })
+    parts.push(`INSERT INTO ${t} (${emitted.map((c) => c.name).join(', ')}) VALUES (${vals.join(', ')});`)
   }
   totalRows += rows.length
   summary.push(`  ${t}: ${rows.length} baris`)
