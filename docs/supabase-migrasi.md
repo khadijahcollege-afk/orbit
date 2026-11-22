@@ -37,6 +37,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_optin BOOLEAN NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS processing_error TEXT;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction JSONB; -- hasil ekstraksi MVP
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS confirmed BOOLEAN;
 ALTER TABLE ai_approvals ADD COLUMN IF NOT EXISTS execution_note TEXT;
 -- activity_logs MVP mencatat peristiwa tingkat akun (workspace NULL):
@@ -94,13 +95,27 @@ psql "$DATABASE_URL" -c "SELECT (SELECT COUNT(*) FROM documents) docs, (SELECT C
 ```
 Angka harus sama dengan `npm run metrics` (demo: 12 dokumen, 3 pengguna, 14 chunk).
 
-## Langkah 6 — Lapisan data server (manual, sengaja)
-Server node saat ini memakai SQLite (`node:sqlite`). Skema SQL-nya adalah
-cermin skema PostgreSQL, jadi perpindahan data layer = ganti `db.mjs`
-ke klien `pg`/`postgres` dengan `DATABASE_URL` (query sudah Postgres-style
-kebanyakan; catatan: `datetime('now')` → `now()`, `json_extract` → operator
-JSONB). Ini pekerjaan terkontrol — kerjakan setelah proyek Supabase ada dan
-uji dengan test suite yang sama (`npm test`, `ORBIT_DB=pg`).
+## Langkah 6 — Lapisan data server (SELESAI — mode bawaan)
+Server kini mendukung PostgreSQL langsung via env:
+
+```bash
+# Uji lokal tanpa server apa pun (PostgreSQL embedded, skema bootstrap otomatis):
+ORBIT_DB=pglite AI_PROVIDER=local npm test     # 18/18 e2e lolos di Postgres
+
+# Produksi Supabase (skema dari Langkah 3-5):
+DATABASE_URL="postgresql://..." ORBIT_DB=pg node server/index.mjs
+```
+
+Implementasi: `server/db-bridge.mjs` (jembatan sinkron via worker + Atomics —
+menjaga ~300 call site `prepare().get/all/run` tanpa refactor) dan
+`server/db-worker.mjs` (backend pglite/pg + bootstrap skema idempoten).
+Portabilitas sudah dibereskan: `?`→$n, `datetime('now')`→`now()`,
+JSONB kembali sebagai objek (`asJson`), boolean SQLite 0/1→BOOLEAN (`bool`),
+`INSERT OR IGNORE`→`ON CONFLICT DO NOTHING`, DISTINCT/ORDER BY dibereskan.
+
+Catatan pgvector: kolom `document_chunks.embedding` disimpan sebagai JSON teks
+(MVP, dim 128 lokal). Bila beralih ke pgvector sungguhan (1536 dim), jalankan
+migrasi embedding terpisah — saat ini kueri pencarian dihitung di aplikasi.
 
 ## RLS & keamanan
 - `policies/rls_full.sql` mengaktifkan RLS + helper `orbit_can_access` (anti-rekursif) — wajib aktif sebelum klien non-server menyentuh DB.

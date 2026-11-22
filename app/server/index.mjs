@@ -28,6 +28,10 @@ import {
 } from './auth.mjs'
 import { withFallback, getProvider, getCooldowns } from './ai/index.mjs'
 import { activeProvider, createCheckout, verifyMidtransSignature, midtransStatusToOrder } from './payments.mjs'
+import { bool } from './db.mjs'
+
+/** Kolom JSONB: SQLite menyimpan teks, PostgreSQL mengembalikan objek. */
+const asJson = (v) => (v === null || v === undefined ? null : typeof v === 'string' ? JSON.parse(v) : v)
 import { captureError } from './telemetry.mjs'
 import { hybridSearch, processDocument } from './pipeline.mjs'
 
@@ -143,7 +147,7 @@ function docOut(row) {
     processing_status: row.processing_status,
     processing_error: row.processing_error,
     source_type: row.source_type,
-    extraction: row.extraction ? JSON.parse(row.extraction) : null,
+    extraction: asJson(row.extraction),
     confirmed: row.confirmed === 1,
     created_at: iso(row.created_at),
     updated_at: iso(row.updated_at),
@@ -256,7 +260,7 @@ route(/^\/api\/v1\/auth\/login$/, async (req, res) => {
   }
   const session = createSession(user.id)
   const ws = db.prepare('SELECT workspace_id FROM workspace_members WHERE user_id = ? LIMIT 1').get(user.id)
-  json(res, 200, { token: session.token, expires_at: session.expires_at, user: { id: user.id, email: user.email, full_name: user.full_name, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null, notification_optin: user.notification_optin === 1 }, workspace_id: ws?.workspace_id })
+  json(res, 200, { token: session.token, expires_at: session.expires_at, user: { id: user.id, email: user.email, full_name: user.full_name, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null, notification_optin: user.notification_optin === 1 || user.notification_optin === true }, workspace_id: ws?.workspace_id })
 })
 
 route(/^\/api\/v1\/auth\/logout$/, async (req, res) => {
@@ -270,7 +274,7 @@ route(/^\/api\/v1\/users\/me$/, async (req, res) => {
   const user = requireUser(req)
   if (req.method === 'GET') {
     const ws = db.prepare('SELECT workspace_id FROM workspace_members WHERE user_id = ? LIMIT 1').get(user.id)
-    json(res, 200, { id: user.id, email: user.email, full_name: user.full_name, avatar_url: null, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null, notification_optin: user.notification_optin === 1, workspace_id: ws?.workspace_id })
+    json(res, 200, { id: user.id, email: user.email, full_name: user.full_name, avatar_url: null, locale: user.locale, timezone: user.timezone, onboarded_at: user.onboarded_at ?? null, notification_optin: user.notification_optin === 1 || user.notification_optin === true, workspace_id: ws?.workspace_id })
     return
   }
   if (req.method === 'PATCH') {
@@ -294,7 +298,7 @@ route(/^\/api\/v1\/users\/me\/onboarding$/, async (req, res) => {
   if (!known.includes(tz)) throw new HttpError(400, 'validation_error', 'timezone tidak dikenal', { fields: { timezone: `salah satu dari: ${known.join(', ')}` } })
   const locale = ['id-ID', 'en'].includes(String(b.locale)) ? String(b.locale) : 'id-ID'
   const notif = b.notification_optin === true
-  db.prepare('UPDATE users SET timezone = ?, locale = ?, onboarded_at = ?, notification_optin = ?, updated_at = ? WHERE id = ?').run(tz, locale, now(), notif ? 1 : 0, now(), user.id)
+  db.prepare('UPDATE users SET timezone = ?, locale = ?, onboarded_at = ?, notification_optin = ?, updated_at = ? WHERE id = ?').run(tz, locale, now(), bool(notif), now(), user.id)
   logActivity(null, user.id, 'account.onboarded', 'user', user.id, { timezone: tz, notification_optin: notif })
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)
   json(res, 200, { id: u.id, email: u.email, full_name: u.full_name, locale: u.locale, timezone: u.timezone, onboarded_at: u.onboarded_at, notification_optin: notif })
@@ -428,14 +432,14 @@ route(/^\/api\/v1\/documents\/([0-9a-f-]{36})\/confirm-extraction$/, async (req,
   if (!doc || !requireMembership(user.id, doc.workspace_id, 'member')) throw new HttpError(404, 'not_found', 'Dokumen tidak ada')
   const b = await readJson(req)
   if (typeof b.approved !== 'boolean') throw new HttpError(400, 'validation_error', 'approved (boolean) wajib')
-  let extraction = doc.extraction ? JSON.parse(doc.extraction) : null
+  let extraction = asJson(doc.extraction)
   if (b.corrected) {
     if (extraction) extraction = { ...extraction, ...b.corrected, _ai_original: { confidence: extraction.confidence } }
     else extraction = { ...b.corrected }
   }
   const status = b.approved ? 'completed' : 'needs_review'
   db.prepare(`UPDATE documents SET extraction = ?, processing_status = ?, confirmed = ?, updated_at = ? WHERE id = ?`)
-    .run(extraction ? JSON.stringify(extraction) : null, status, b.approved ? 1 : 0, now(), doc.id)
+    .run(extraction ? JSON.stringify(extraction) : null, status, bool(b.approved), now(), doc.id)
   logActivity(doc.workspace_id, user.id, 'document.confirmed', 'document', doc.id, { approved: b.approved })
   json(res, 200, docOut(db.prepare('SELECT * FROM documents WHERE id = ?').get(doc.id)))
 })
@@ -460,7 +464,7 @@ route(/^\/api\/v1\/graph$/, async (req, res, ctx) => {
   let edges = []
   const docs = db
     .prepare(
-      `SELECT DISTINCT d.id, d.title, d.processing_status
+      `SELECT DISTINCT d.id, d.title, d.processing_status, d.created_at
        FROM documents d JOIN document_entities de ON de.document_id = d.id
        WHERE d.workspace_id = ? AND de.entity_id IN (${ids.map(() => '?').join(',') || "''"})
        ORDER BY d.created_at DESC LIMIT 40`,
@@ -537,7 +541,7 @@ route(/^\/api\/v1\/assistant\/chat$/, async (req, res) => {
   const hits = hybridSearch({ workspaceId: wsId, query: String(message), mode: 'hybrid', limit: 5 })
   const context = hits.map((h) => {
     const d = db.prepare('SELECT extraction FROM documents WHERE id = ?').get(h.document_id)
-    const ex = d?.extraction ? JSON.parse(d.extraction) : null
+    const ex = asJson(d?.extraction)
     return { id: h.id, document_id: h.document_id, workspace_id: wsId, title: h.title, content: h.content, due_date: ex?.due_date || null, score: h.score }
   })
   const answer = await withFallback('answerQuestion', { question: message, context })
@@ -706,7 +710,7 @@ route(/^\/api\/v1\/approvals\/([0-9a-f-]{36})\/(approve|reject)$/, async (req, r
   const decision = ctx.params[1]
   let note = null
   if (decision === 'approve') {
-    const payload = JSON.parse(approval.payload)
+    const payload = asJson(approval.payload)
     if (approval.action_type === 'create_task') {
       const id = uuid()
       db.prepare(`INSERT INTO tasks (id, workspace_id, created_by, title, due_at) VALUES (?, ?, ?, ?, ?)`)
@@ -752,7 +756,7 @@ route(/^\/api\/v1\/approvals$/, async (req, res, ctx) => {
   json(res, 200, {
     data: rows.map((r) => ({
       ...r,
-      payload: JSON.parse(r.payload),
+      payload: asJson(r.payload),
       created_at: iso(r.created_at),
       decided_at: iso(r.decided_at),
       expires_at: iso(r.expires_at),
@@ -835,7 +839,7 @@ function orderOut(o) {
 
 route(/^\/api\/v1\/billing\/plans$/, async (req, res) => {
   const plans = db.prepare('SELECT id, name, price_idr, limits FROM plans ORDER BY price_idr').all()
-  json(res, 200, { provider: activeProvider(), plans: plans.map((p) => ({ ...p, limits: JSON.parse(p.limits || '{}') })) })
+  json(res, 200, { provider: activeProvider(), plans: plans.map((p) => ({ ...p, limits: asJson(p.limits) || {} })) })
 })
 
 route(/^\/api\/v1\/billing\/checkout$/, async (req, res) => {
@@ -945,7 +949,7 @@ route(/^\/api\/v1\/account\/export\/([0-9a-f-]{36})$/, async (req, res, ctx) => 
   const user = requireUser(req)
   const row = db.prepare('SELECT * FROM exports WHERE id = ? AND user_id = ?').get(ctx.params[0], user.id)
   if (!row) throw new HttpError(404, 'not_found', 'Ekspor tidak ada')
-  json(res, 200, JSON.parse(row.payload))
+  json(res, 200, asJson(row.payload))
 })
 
 /* ---- umpan balik beta (docs/08: beta user feedback channel) ---- */

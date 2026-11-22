@@ -116,6 +116,7 @@ async function waitProcessed(token, ws, docId, timeoutMs = 30_000) {
 
 /* ---------- state lintas test (urutan eksekusi = urutan deklarasi) ---------- */
 
+const BACKEND = (process.env.ORBIT_DB || 'sqlite').toLowerCase()
 const S = {} // A (owner aktif), B (pengguna lain), C (free kuota), docA1, docA2, docB
 
 test('health: db ok, provider lokal', async () => {
@@ -327,16 +328,18 @@ test('umpan balik beta: kirim → masuk daftar; kosong → 400; metrik jalan', a
   assert.equal(r.data.status, 'open')
   const list = await call('/feedback', { token: S.C.token, status: 200 })
   assert.ok(list.data.data.some((f) => f.id === r.data.id))
-  // metrik beta (baca-only) selesai tanpa error di data dir terisolasi
-  const out = execFileSync(process.execPath, ['server/metrics.mjs'], {
-    cwd: APP,
-    env: { ...process.env, ORBIT_DATA_DIR: dataDir },
-    encoding: 'utf8',
-  })
-  assert.ok(out.includes('METRIK BETA ORBIT'))
+  // metrik beta (baca-only, alat operator SQLite) — hanya dijalankan di backend sqlite
+  if (BACKEND === 'sqlite') {
+    const out = execFileSync(process.execPath, ['server/metrics.mjs'], {
+      cwd: APP,
+      env: { ...process.env, ORBIT_DATA_DIR: dataDir },
+      encoding: 'utf8',
+    })
+    assert.ok(out.includes('METRIK BETA ORBIT'))
+  }
 })
 
-test('kedaluwarsa langganan: periode lewat → expired + limit kembali Free', async () => {
+test('kedaluwarsa langganan: periode lewat → expired + limit kembali Free', { skip: BACKEND !== 'sqlite' && 'uji via berkas SQLite langsung' }, async () => {
   // Backdate periode A langsung di DB test (proses terpisah; SQLite WAL multi-proses)
   const { DatabaseSync } = await import('node:sqlite')
   const sql = new DatabaseSync(path.join(dataDir, 'orbit.db'))
@@ -356,7 +359,7 @@ test('kedaluwarsa langganan: periode lewat → expired + limit kembali Free', as
   })
 })
 
-test('backup: VACUUM INTO di data dir terisolasi', () => {
+test('backup: VACUUM INTO di data dir terisolasi', { skip: BACKEND !== 'sqlite' && 'alat operator SQLite' }, () => {
   execFileSync(process.execPath, ['server/backup.mjs'], {
     cwd: APP,
     env: { ...process.env, ORBIT_DATA_DIR: dataDir },

@@ -149,6 +149,7 @@ try {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS processing_error TEXT;
+    ALTER TABLE documents ADD COLUMN IF NOT EXISTS extraction JSONB;
     ALTER TABLE documents ADD COLUMN IF NOT EXISTS confirmed BOOLEAN;
     ALTER TABLE ai_approvals ADD COLUMN IF NOT EXISTS execution_note TEXT;
     -- activity_logs MVP mencatat peristiwa tingkat akun (workspace NULL)

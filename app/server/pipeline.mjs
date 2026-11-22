@@ -22,13 +22,13 @@ const insChunk = db.prepare(
   `INSERT INTO document_chunks (id, document_id, workspace_id, chunk_index, content, embedding) VALUES (?, ?, ?, ?, ?, ?)`,
 )
 const insEntity = db.prepare(
-  `INSERT OR IGNORE INTO entities (id, workspace_id, entity_type, name, normalized_name) VALUES (?, ?, ?, ?, ?)`,
+  `INSERT INTO entities (id, workspace_id, entity_type, name, normalized_name) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 )
 const getEntity = db.prepare(
   `SELECT id FROM entities WHERE workspace_id = ? AND normalized_name = ? AND entity_type = ?`,
 )
 const insDocEntity = db.prepare(
-  `INSERT OR IGNORE INTO document_entities (document_id, entity_id, relation_type, confidence) VALUES (?, ?, 'mentions', ?)`,
+  `INSERT INTO document_entities (document_id, entity_id, relation_type, confidence) VALUES (?, ?, 'mentions', ?) ON CONFLICT DO NOTHING`,
 )
 
 function upsertEntity(workspaceId, type, name, confidence) {

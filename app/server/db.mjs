@@ -1,6 +1,10 @@
 /* ============================================================
-   ORBIT server — database (SQLite, mirror skema PostgreSQL
-   blueprint). Node >= 23.4 (node:sqlite tanpa flag).
+   ORBIT server — database.
+   Default: SQLite (node:sqlite, mirror skema PostgreSQL blueprint).
+   ORBIT_DB=pglite : PostgreSQL embedded (uji lokal, skema bootstrap
+                     otomatis dari blueprint) via jembatan sinkron.
+   ORBIT_DB=pg     : PostgreSQL nyata (Supabase) via DATABASE_URL —
+                     skema dibuat dulu: docs/supabase-migrasi.md.
    Timestamps ISO 8601; embedding disimpan JSON TEXT (MVP):
    skala demo, retrieval dihitung di aplikasi.
    ============================================================ */
@@ -8,6 +12,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createPgBridge } from './db-bridge.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 // ORBIT_DATA_DIR: lokasi data alternatif (tests / multi-env); default server/data
@@ -15,9 +20,19 @@ const dataDir = process.env.ORBIT_DATA_DIR || path.join(here, 'data')
 export const storageDir = path.join(dataDir, 'storage')
 mkdirSync(storageDir, { recursive: true })
 
-export const db = new DatabaseSync(path.join(dataDir, 'orbit.db'))
-db.exec('PRAGMA journal_mode = WAL;')
-db.exec('PRAGMA foreign_keys = ON;')
+const PG_MODE = ['pglite', 'pg'].includes((process.env.ORBIT_DB || 'sqlite').toLowerCase())
+
+export const db = PG_MODE
+  ? createPgBridge()
+  : new DatabaseSync(path.join(dataDir, 'orbit.db'))
+
+/** Nilai boolean per-backend: SQLite menyimpan 0/1, PostgreSQL BOOLEAN. */
+export const bool = (v) => (PG_MODE ? v === true || v === 1 : v ? 1 : 0)
+
+if (!PG_MODE) {
+  db.exec('PRAGMA journal_mode = WAL;')
+  db.exec('PRAGMA foreign_keys = ON;')
+}
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -246,13 +261,16 @@ CREATE TABLE IF NOT EXISTS billing_orders (
 );
 `)
 
-/* Migrasi ringan (idempoten): onboarding docs/08 — pilihan timezone/bahasa saat pertama masuk. */
-if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'onboarded_at')) {
-  db.exec(`ALTER TABLE users ADD COLUMN onboarded_at TEXT`)
-}
-/* Optin notifikasi (dari onboarding) — dipakai console untuk izin Notification. */
-if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'notification_optin')) {
-  db.exec(`ALTER TABLE users ADD COLUMN notification_optin INTEGER NOT NULL DEFAULT 0`)
+/* Migrasi ringan (idempoten): onboarding docs/08 — pilihan timezone/bahasa saat pertama masuk.
+   PG mode: kolom-kolom ini sudah dibuat worker bootstrap (blok ALTER). */
+if (!PG_MODE) {
+  if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'onboarded_at')) {
+    db.exec(`ALTER TABLE users ADD COLUMN onboarded_at TEXT`)
+  }
+  /* Optin notifikasi (dari onboarding) — dipakai console untuk izin Notification. */
+  if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'notification_optin')) {
+    db.exec(`ALTER TABLE users ADD COLUMN notification_optin INTEGER NOT NULL DEFAULT 0`)
+  }
 }
 
 /* Kanal umpan balik beta (docs/08 Operations: beta user feedback channel). */
@@ -343,7 +361,9 @@ export function getLimits(workspaceId) {
   const rawLimits = sub?.status === 'expired' ? null : sub?.plan_limits
   let limits = DEFAULT_LIMITS
   try {
-    limits = { ...DEFAULT_LIMITS, ...(rawLimits ? JSON.parse(rawLimits) : {}) }
+    // SQLite menyimpan JSON teks; PostgreSQL JSONB mengembalikan objek
+    const parsed = rawLimits == null ? {} : typeof rawLimits === 'string' ? JSON.parse(rawLimits) : rawLimits
+    limits = { ...DEFAULT_LIMITS, ...parsed }
   } catch {
     /* pakai default */
   }
