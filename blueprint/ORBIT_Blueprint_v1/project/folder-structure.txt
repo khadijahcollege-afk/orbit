@@ -1,0 +1,36 @@
+orbit/
+├── apps/
+│   ├── web/                 # Next.js + TypeScript
+│   ├── mobile/              # React Native + Expo
+│   └── api/                 # NestJS backend
+├── packages/
+│   ├── shared-types/
+│   ├── validation/
+│   ├── ui/
+│   ├── api-client/
+│   ├── ai-contracts/
+│   ├── config/
+│   └── utils/
+├── infrastructure/
+│   ├── docker/
+│   ├── database/
+│   │   ├── migrations/
+│   │   ├── seeds/
+│   │   └── policies/
+│   ├── monitoring/
+│   └── deployment/
+├── docs/
+│   ├── architecture/
+│   ├── api/
+│   ├── database/
+│   ├── product/
+│   └── security/
+├── tests/
+│   ├── integration/
+│   ├── e2e/
+│   └── load/
+├── .env.example
+├── docker-compose.yml
+├── turbo.json
+├── pnpm-workspace.yaml
+└── README.md

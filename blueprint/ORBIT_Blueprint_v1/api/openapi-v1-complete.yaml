@@ -1,0 +1,968 @@
+openapi: 3.1.0
+info:
+  title: ORBIT API
+  version: 1.1.0
+  description: |
+    Kontrak lengkap 22 endpoint sesuai api/endpoints.md.
+
+    Konvensi (dari endpoints.md, kini dengan definisi konkret):
+    - Identifikasi resource pakai UUID v4.
+    - Timestamp ISO 8601 selalu dengan offset zona waktu.
+    - Pagination cursor: response list membungkus `{ data: [...], next_cursor }`;
+      `next_cursor: null` berarti halaman terakhir.
+    - Idempotency: endpoint POST yang menciptakan resource menghormati header
+      `Idempotency-Key` (simpan di Redis 24 jam; replay mengembalikan response asli).
+    - Kode error stabil — `error.code` berikut, tidak pernah berubah arti:
+      | code                     | HTTP | Arti |
+      |--------------------------|------|------|
+      | validation_error         | 400  | Payload tidak valid (detail di `error.fields`) |
+      | unauthorized             | 401  | Token tidak ada / kedaluwarsa |
+      | forbidden                | 403  | Bukan anggota workspace / peran kurang |
+      | not_found                | 404  | Resource tidak ada atau bukan milik workspace |
+      | conflict                 | 409  | State bentrok (mis. approval sudah diputuskan) |
+      | payload_too_large        | 413  | Melewati batas ukuran paket |
+      | rate_limited             | 429  | Kuota AI/upload habis; `error.retry_after_ms` |
+      | ai_unavailable           | 503  | Provider AI gagal; retry dengan backoff |
+      | internal_error           | 500  | Kesalahan server (jangan bocorkan detail) |
+    - Jangan pernah mengembalikan path storage privat atau secret provider.
+    - Semua endpoint wajib memverifikasi membership workspace di server
+      (RLS + authorization service), UUID bukan kontrol akses.
+servers:
+  - url: https://api.example.com/api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+  - name: users
+  - name: dashboard
+  - name: documents
+  - name: memory
+  - name: assistant
+  - name: tasks
+  - name: events
+  - name: reminders
+  - name: approvals
+  - name: account
+
+paths:
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Registrasi akun baru
+      description: Mengirim email verifikasi. Membuat users + workspace personal + membership owner.
+      security: [] # publik
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, full_name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                full_name: { type: string, maxLength: 120 }
+                locale: { type: string, default: id-ID }
+                timezone: { type: string, default: Asia/Jakarta }
+      responses:
+        "201": { $ref: "#/components/responses/UserCreated" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /users/me:
+    get:
+      tags: [users]
+      summary: Profil pengguna saat ini
+      responses:
+        "200":
+          description: Profil
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [users]
+      summary: Perbarui profil
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                full_name: { type: string, maxLength: 120 }
+                locale: { type: string, maxLength: 10 }
+                timezone: { type: string, maxLength: 40 }
+                avatar_url: { type: string, format: uri }
+      responses:
+        "200":
+          description: Profil terbarui
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /dashboard:
+    get:
+      tags: [dashboard]
+      summary: Ringkasan dashboard
+      description: Satu panggilan untuk mengisi dashboard; server menghitung dari tasks/reminders/documents.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Ringkasan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /documents:
+    get:
+      tags: [documents]
+      summary: Daftar dokumen
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/Cursor"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: status
+          schema: { $ref: "#/components/schemas/ProcessingStatus" }
+        - in: query
+          name: category
+          schema: { type: string }
+        - in: query
+          name: created_before
+          schema: { type: string, format: date-time }
+      responses:
+        "200": { $ref: "#/components/responses/DocumentList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [documents]
+      summary: Buat record upload (minta signed upload URL)
+      description: >
+        Client memanggil ini dulu, lalu PUT file ke `upload.url` (signed, 15 menit).
+        Server memvalidasi ukuran/MIME/signature saat konfirmasi storage webhook.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, title, file_type, file_size]
+              properties:
+                workspace_id: { type: string, format: uuid }
+                title: { type: string, maxLength: 200 }
+                file_type: { type: string, maxLength: 100 }
+                file_size: { type: integer, minimum: 1, maximum: 26214400 }
+      responses:
+        "201":
+          description: Record dibuat + signed URL
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Document"
+                  - type: object
+                    properties:
+                      upload:
+                        type: object
+                        properties:
+                          url: { type: string, format: uri }
+                          method: { type: string, enum: [PUT] }
+                          expires_at: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /documents/{id}:
+    get:
+      tags: [documents]
+      summary: Detail dokumen
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - in: query
+          name: include
+          schema:
+            type: string
+            enum: [extraction, entities, chunks]
+      responses:
+        "200":
+          description: Detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [documents]
+      summary: Hapus dokumen
+      description: Soft-delete + jadwalkan pembersihan file turunan (chunks, embeddings, storage).
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Dihapus }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /documents/{id}/process:
+    post:
+      tags: [documents]
+      summary: Antrikan pemrosesan (OCR → ekstraksi → embedding)
+      description: Idempoten; memanggil ulang untuk dokumen yang sudah diantrikan tidak membuat job baru.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Job diantrikan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  document: { $ref: "#/components/schemas/Document" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /documents/{id}/confirm-extraction:
+    post:
+      tags: [documents]
+      summary: Konfirmasi / koreksi hasil ekstraksi
+      description: >
+        Nilai yang dikonfirmasi menjadi sumber kebenaran; hasil AI disimpan sebagai
+        `metadata.ai_original` untuk audit akurasi model.
+      parameters:
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved]
+              properties:
+                approved: { type: boolean }
+                corrected:
+                  $ref: "#/components/schemas/Extraction"
+      responses:
+        "200":
+          description: Ekstraksi terkonfirmasi
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /memory/search:
+    get:
+      tags: [memory]
+      summary: Pencarian memori (hybrid keyword + semantic)
+      description: >
+        Menggabungkan FTS (`search_tsv`) dan pgvector cosine; rerank server-side.
+        Selalu workspace-scoped. Setiap hasil menyertakan sumber dan skor.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - in: query
+          name: q
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 500 }
+        - in: query
+          name: mode
+          schema: { type: string, enum: [hybrid, keyword, semantic], default: hybrid }
+        - in: query
+          name: category
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200":
+          description: Hasil pencarian dengan sitasi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/MemoryHit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /assistant/chat:
+    post:
+      tags: [assistant]
+      summary: Tanya assistant (RAG dengan sitasi)
+      description: >
+        Jawaban hanya boleh dibangun dari retrieval workspace ini. Proposal aksi
+        dikembalikan sebagai `suggested_actions.requires_approval = true` — model
+        tidak pernah menulis ke database langsung.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, message]
+              properties:
+                workspace_id: { type: string, format: uuid }
+                conversation_id: { type: string, format: uuid }
+                message: { type: string, minLength: 1, maxLength: 10000 }
+      responses:
+        "200":
+          description: Jawaban dengan sumber
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssistantAnswer" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/AiUnavailable" }
+
+  /tasks:
+    get:
+      tags: [tasks]
+      summary: Daftar tugas
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/Cursor"
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, in_progress, completed, cancelled] }
+        - in: query
+          name: event_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: due_before
+          schema: { type: string, format: date-time }
+      responses:
+        "200": { $ref: "#/components/responses/TaskList" }
+    post:
+      tags: [tasks]
+      summary: Buat tugas
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInput" }
+      responses:
+        "201":
+          description: Tugas dibuat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /tasks/{id}:
+    patch:
+      tags: [tasks]
+      summary: Perbarui tugas (status, prioritas, due_at)
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title: { type: string, maxLength: 200 }
+                description: { type: string, nullable: true }
+                status: { type: string, enum: [pending, in_progress, completed, cancelled] }
+                priority: { type: string, enum: [low, normal, high, urgent] }
+                due_at: { type: string, format: date-time, nullable: true }
+      responses:
+        "200":
+          description: Tugas terbarui
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /events:
+    get:
+      tags: [events]
+      summary: Daftar life events
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - in: query
+          name: status
+          schema: { type: string, enum: [draft, active, completed, cancelled] }
+      responses:
+        "200":
+          description: Daftar event (termasuk progres task-nya)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Event" }
+    post:
+      tags: [events]
+      summary: Buat event
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventInput" }
+      responses:
+        "201":
+          description: Event dibuat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /reminders:
+    get:
+      tags: [reminders]
+      summary: Daftar pengingat
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - in: query
+          name: status
+          schema: { type: string, enum: [scheduled, sent, dismissed, cancelled, failed] }
+        - in: query
+          name: scheduled_from
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Daftar pengingat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Reminder" }
+    post:
+      tags: [reminders]
+      summary: Buat pengingat
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReminderInput" }
+      responses:
+        "201":
+          description: Pengingat dibuat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reminder" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /approvals/{id}/approve:
+    post:
+      tags: [approvals]
+      summary: Setujui aksi yang diusulkan AI
+      description: >
+        Hanya pemilik approval yang dapat memutuskan. Server memvalidasi transisi
+        status dan meng-eksekusi aksi; eksekusi gagal dicatat status `failed`.
+      parameters:
+        - $ref: "#/components/parameters/ApprovalId"
+      responses:
+        "200":
+          description: Disetujui + hasil eksekusi
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approval" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /approvals/{id}/reject:
+    post:
+      tags: [approvals]
+      summary: Tolak aksi yang diusulkan AI
+      parameters:
+        - $ref: "#/components/parameters/ApprovalId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Ditolak
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Approval" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /account/export:
+    get:
+      tags: [account]
+      summary: Minta ekspor data
+      description: >
+        Async job → response 202 dengan export_id; unduh via URL signed yang
+        dikirim email. Berisi seluruh data workspace milik pengguna.
+      responses:
+        "202":
+          description: Ekspor diantrikan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  export_id: { type: string, format: uuid }
+                  status: { type: string, enum: [queued, processing, ready, failed] }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /account:
+    delete:
+      tags: [account]
+      summary: Minta penghapusan akun
+      description: >
+        Per doc 05: penghapusan sesuai kebijakan retensi. Menjadwalkan penghapusan
+        data + file turunan; ada masa tenggang untuk pembatalan.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm_text: { type: string, description: "Harus literal: HAPUS AKUN" }
+      responses:
+        "202":
+          description: Penghapusan dijadwalkan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scheduled_at: { type: string, format: date-time }
+                  cancel_until: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /events/generate-plan:
+    post:
+      tags: [events]
+      summary: Susun rencana Life Event dari satu kalimat (module 05)
+      description: >
+        Dipanggil pengguna (bukan inisiatif model) sehingga tidak butuh approval.
+        Membuat event + tasks sekaligus. Quota AI berlaku (ai_usage kind=plan).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, goal]
+              properties:
+                workspace_id: { type: string, format: uuid }
+                goal: { type: string, minLength: 3, maxLength: 300 }
+      responses:
+        "201":
+          description: Event + tasks terbentuk
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  event: { $ref: "#/components/schemas/Event" }
+                  tasks:
+                    type: array
+                    items: { $ref: "#/components/schemas/Task" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /account/usage:
+    get:
+      tags: [account]
+      summary: Paket & pemakaian bulan berjalan
+      description: Sumber metrik kuota (doc 07) untuk UI meter dan enforcement.
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Paket aktif, batas, dan pemakaian
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan:
+                    type: object
+                    properties:
+                      id: { type: string, enum: [free, plus, pro, family, business] }
+                      name: { type: string }
+                      price_idr: { type: integer }
+                      status: { type: string, enum: [trialing, active, past_due, cancelled, expired] }
+                      current_period_end: { type: string, format: date-time, nullable: true }
+                  limits:
+                    type: object
+                    properties:
+                      documents: { type: integer }
+                      reminders_month: { type: integer }
+                      ai_answers_month: { type: integer }
+                  usage:
+                    type: object
+                    properties:
+                      documents: { type: integer }
+                      answers_month: { type: integer }
+                      reminders_month: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    WorkspaceId:
+      in: query
+      name: workspace_id
+      required: true
+      schema: { type: string, format: uuid }
+      description: Workspace target; membership diverifikasi server.
+    Cursor:
+      in: query
+      name: cursor
+      schema: { type: string }
+      description: Cursor pagination (opaque, dari `next_cursor`).
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string, maxLength: 64 }
+      description: UUID unik per operasi; replay 24 jam mengembalikan hasil asli.
+    DocumentId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+    TaskId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+    ApprovalId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        full_name: { type: string }
+        avatar_url: { type: string, nullable: true }
+        locale: { type: string }
+        timezone: { type: string }
+        created_at: { type: string, format: date-time }
+
+    ProcessingStatus:
+      type: string
+      enum: [pending, queued, processing, needs_review, completed, failed]
+
+    Extraction:
+      type: object
+      description: Skema hasil ekstraksi terstruktur (bentuk mengikuti doc 04).
+      properties:
+        document_type: { type: string, examples: [bill, contract, receipt, registration] }
+        title: { type: string }
+        issuer: { type: string, nullable: true }
+        amount: { type: integer, nullable: true }
+        currency: { type: string, default: IDR }
+        due_date: { type: string, format: date, nullable: true }
+        category: { type: string, nullable: true }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        requires_confirmation: { type: boolean }
+        source:
+          type: object
+          properties:
+            document_id: { type: string, format: uuid }
+            page: { type: integer }
+
+    Document:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        file_type: { type: string }
+        file_size: { type: integer }
+        category: { type: string, nullable: true }
+        processing_status: { $ref: "#/components/schemas/ProcessingStatus" }
+        source_type: { type: string, enum: [upload, camera, voice, link, text, email] }
+        extraction: { $ref: "#/components/schemas/Extraction" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    MemoryHit:
+      type: object
+      properties:
+        document_id: { type: string, format: uuid }
+        chunk_id: { type: string, format: uuid, nullable: true }
+        title: { type: string }
+        snippet: { type: string }
+        score: { type: number, description: "0..1, gabungan keyword+vector" }
+        matched_entities:
+          type: array
+          items: { type: string }
+        source:
+          type: object
+          properties:
+            page: { type: integer, nullable: true }
+            created_at: { type: string, format: date-time }
+
+    Citation:
+      type: object
+      properties:
+        document_id: { type: string, format: uuid }
+        title: { type: string }
+        page: { type: integer, nullable: true }
+        chunk_id: { type: string, format: uuid, nullable: true }
+
+    SuggestedAction:
+      type: object
+      properties:
+        type: { type: string, enum: [create_task, create_reminder, create_event] }
+        payload:
+          oneOf:
+            - $ref: "#/components/schemas/TaskInput"
+            - $ref: "#/components/schemas/ReminderInput"
+            - $ref: "#/components/schemas/EventInput"
+        requires_approval: { type: boolean, enum: [true] }
+
+    AssistantAnswer:
+      type: object
+      properties:
+        conversation_id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        answer: { type: string }
+        citations:
+          type: array
+          items: { $ref: "#/components/schemas/Citation" }
+        suggested_actions:
+          type: array
+          items: { $ref: "#/components/schemas/SuggestedAction" }
+        insufficient_data:
+          type: boolean
+          description: >
+            True bila retrieval tidak menemukan dasar jawaban — assistant
+            menolak menebak (doc 03 UX AI: minta klarifikasi).
+
+    TaskInput:
+      type: object
+      required: [workspace_id, title]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid, nullable: true }
+        title: { type: string, maxLength: 200 }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [pending, in_progress], default: pending }
+        priority: { type: string, enum: [low, normal, high, urgent], default: normal }
+        due_at: { type: string, format: date-time, nullable: true }
+        source_document_id: { type: string, format: uuid, nullable: true }
+
+    Task:
+      allOf:
+        - $ref: "#/components/schemas/TaskInput"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            created_by: { type: string, format: uuid, nullable: true }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    EventInput:
+      type: object
+      required: [workspace_id, title]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        title: { type: string, maxLength: 200 }
+        description: { type: string, nullable: true }
+        event_type: { type: string, examples: [move, travel, enrollment, wedding] }
+        start_at: { type: string, format: date-time, nullable: true }
+        end_at: { type: string, format: date-time, nullable: true }
+
+    Event:
+      allOf:
+        - $ref: "#/components/schemas/EventInput"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [draft, active, completed, cancelled] }
+            task_progress:
+              type: object
+              properties:
+                done: { type: integer }
+                total: { type: integer }
+            created_at: { type: string, format: date-time }
+
+    ReminderInput:
+      type: object
+      required: [workspace_id, title, scheduled_at]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid, nullable: true }
+        title: { type: string, maxLength: 200 }
+        scheduled_at: { type: string, format: date-time }
+
+    Reminder:
+      allOf:
+        - $ref: "#/components/schemas/ReminderInput"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [scheduled, sent, dismissed, cancelled, failed] }
+            created_at: { type: string, format: date-time }
+
+    Approval:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        action_type: { type: string, enum: [create_task, create_reminder, create_event, external_action] }
+        payload: { type: object }
+        status: { type: string, enum: [pending, approved, rejected, expired, executed, failed] }
+        expires_at: { type: string, format: date-time, nullable: true }
+        decided_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    DashboardSummary:
+      type: object
+      properties:
+        priorities:
+          type: array
+          items: { $ref: "#/components/schemas/Task" }
+        pending_approvals:
+          type: integer
+        due_soon:
+          type: array
+          items: { $ref: "#/components/schemas/Reminder" }
+        recent_documents:
+          type: array
+          items: { $ref: "#/components/schemas/Document" }
+        active_events:
+          type: array
+          items: { $ref: "#/components/schemas/Event" }
+        generated_at: { type: string, format: date-time }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [validation_error, unauthorized, forbidden, not_found, conflict,
+                     payload_too_large, rate_limited, ai_unavailable, internal_error]
+            message: { type: string }
+            fields:
+              type: object
+              description: Detail per-field untuk validation_error.
+              additionalProperties: { type: string }
+            retry_after_ms: { type: integer, nullable: true }
+            request_id: { type: string, description: "Untuk tracing/error tracking" }
+
+  responses:
+    UserCreated:
+      description: Akun dibuat; email verifikasi terkirim
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/User" }
+    DocumentList:
+      description: Daftar dokumen (cursor)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items: { $ref: "#/components/schemas/Document" }
+              next_cursor: { type: string, nullable: true }
+    TaskList:
+      description: Daftar tugas (cursor)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items: { $ref: "#/components/schemas/Task" }
+              next_cursor: { type: string, nullable: true }
+    ValidationError:
+      description: Payload tidak valid
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Tidak terautentikasi
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Bukan anggota workspace / peran kurang
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Tidak ditemukan (atau bukan milik workspace)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: State bentrok
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: Melewati batas ukuran paket
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Kuota habis
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    AiUnavailable:
+      description: Provider AI tidak tersedia
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

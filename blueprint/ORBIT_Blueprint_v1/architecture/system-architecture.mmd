@@ -1,0 +1,19 @@
+flowchart TD
+  U[User] --> W[Web: Next.js]
+  U --> M[Mobile: React Native + Expo]
+  W --> API[NestJS API]
+  M --> API
+  API --> AUTH[Supabase Auth]
+  API --> CORE[Core Modules]
+  CORE --> DOC[Document Service]
+  CORE --> TASK[Tasks and Events]
+  CORE --> ASSIST[Assistant Service]
+  DOC --> QUEUE[Redis + BullMQ]
+  QUEUE --> OCR[OCR and Extraction]
+  OCR --> AI[AI Provider Layer]
+  ASSIST --> RETRIEVE[Hybrid Retrieval]
+  RETRIEVE --> PG[(PostgreSQL + pgvector)]
+  DOC --> STORAGE[(Private Object Storage)]
+  TASK --> NOTIFY[Notification Service]
+  NOTIFY --> PUSH[Push / Email]
+  CORE --> PG

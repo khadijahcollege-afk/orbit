@@ -1,0 +1,12 @@
+flowchart TD
+  D[Document] -->|mentions| E[Entity]
+  D -->|contains date| T[Date]
+  D -->|suggests| A[Action proposal]
+  A -->|after approval| TASK[Task]
+  TASK --> R[Reminder]
+  EVENT[Life Event] -->|generates| TASK
+  D --> SEARCH[Search index]
+  E --> SEARCH
+  TASK --> TIMELINE[Timeline]
+  R --> TIMELINE
+  EVENT --> TIMELINE

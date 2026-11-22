@@ -1,0 +1,7 @@
+# Artefak alat lokal (bukan bagian produk)
+.v2c/
+out/
+
+# OS
+.DS_Store
+Thumbs.db

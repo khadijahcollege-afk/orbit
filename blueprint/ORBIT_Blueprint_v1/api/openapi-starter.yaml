@@ -1,0 +1,90 @@
+openapi: 3.1.0
+info:
+  title: ORBIT API
+  version: 1.0.0
+  description: Starter API contract for ORBIT Personal Life Operating System.
+servers:
+  - url: https://api.example.com/api/v1
+security:
+  - bearerAuth: []
+paths:
+  /users/me:
+    get:
+      summary: Get current user profile
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  email: { type: string, format: email }
+                  full_name: { type: string }
+                  locale: { type: string }
+                  timezone: { type: string }
+  /documents:
+    get:
+      summary: List documents
+      parameters:
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: Document list
+    post:
+      summary: Create document upload record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, title, file_type, file_size]
+              properties:
+                workspace_id: { type: string, format: uuid }
+                title: { type: string }
+                file_type: { type: string }
+                file_size: { type: integer, minimum: 1 }
+      responses:
+        "201":
+          description: Upload record created
+  /assistant/chat:
+    post:
+      summary: Ask ORBIT assistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspace_id, message]
+              properties:
+                workspace_id: { type: string, format: uuid }
+                conversation_id: { type: string, format: uuid }
+                message: { type: string, minLength: 1, maxLength: 10000 }
+      responses:
+        "200":
+          description: Assistant answer with citations
+  /tasks:
+    get:
+      summary: List tasks
+      responses:
+        "200":
+          description: Task list
+    post:
+      summary: Create task
+      responses:
+        "201":
+          description: Task created
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

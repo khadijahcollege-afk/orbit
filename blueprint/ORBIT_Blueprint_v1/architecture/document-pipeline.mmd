@@ -1,0 +1,17 @@
+flowchart TD
+  A[User uploads file] --> B[Validate file]
+  B --> C[Private object storage]
+  C --> D[Create background job]
+  D --> E[Detect file type]
+  E --> F[OCR / text extraction]
+  F --> G[Classification]
+  G --> H[Structured extraction]
+  H --> I[Schema and confidence validation]
+  I --> J{Reliable?}
+  J -->|Yes| K[Save structured data]
+  J -->|Review| L[User confirmation]
+  L --> K
+  K --> M[Chunk content]
+  M --> N[Generate embeddings]
+  N --> O[Workspace-scoped vector index]
+  O --> P[Link entities and timeline]

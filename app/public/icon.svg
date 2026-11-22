@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <defs>
+    <linearGradient id="orb-g" x1="6" y1="6" x2="42" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="hsl(258 88% 72%)"/>
+      <stop offset="1" stop-color="hsl(258 88% 55%)"/>
+    </linearGradient>
+    <linearGradient id="orb-ring" x1="2" y1="24" x2="46" y2="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="hsl(188 88% 56%)"/>
+      <stop offset="0.5" stop-color="hsl(258 88% 67%)"/>
+      <stop offset="1" stop-color="hsl(304 76% 64%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="10" fill="#0b0a16"/>
+  <circle cx="24" cy="24" r="9.5" fill="url(#orb-g)"/>
+  <circle cx="20.5" cy="20.5" r="3" fill="hsl(0 0% 100% / 0.35)"/>
+  <ellipse cx="24" cy="24" rx="19" ry="7.5" stroke="url(#orb-ring)" stroke-width="2.4" transform="rotate(-24 24 24)" stroke-linecap="round" stroke-dasharray="90 12"/>
+  <circle cx="40" cy="14.4" r="2.4" fill="hsl(188 88% 60%)"/>
+</svg>

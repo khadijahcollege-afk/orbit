@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "ORBIT",
+    "slug": "orbit-mobile",
+    "version": "1.0.0",
+    "scheme": "orbit",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B1020",
+    "platforms": ["ios", "android", "web"],
+    "plugins": ["expo-router", "expo-status-bar", "expo-secure-store"]
+  }
+}
