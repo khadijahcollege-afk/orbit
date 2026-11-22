@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "node --test server/tests/e2e.test.mjs",
     "test:load": "node server/tests/load.mjs",
-    "metrics": "node server/metrics.mjs"
+    "metrics": "node server/metrics.mjs",
+    "export:pg": "node server/export-pg.mjs"
   },
   "dependencies": {
     "@fontsource/bebas-neue": "^5.0.0",
