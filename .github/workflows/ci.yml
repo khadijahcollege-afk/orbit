@@ -14,6 +14,8 @@ jobs:
     defaults:
       run:
         working-directory: app
+    env:
+      AI_PROVIDER: local # CI tanpa jaringan AI — jangkar lokal deterministik
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,6 +27,11 @@ jobs:
       - run: npm run lint
       - run: npx tsc -b
       - run: npm test
+      - name: e2e PostgreSQL (pglite embedded)
+        run: npm test
+        env:
+          ORBIT_DB: pglite
+          AI_PROVIDER: local
       - run: npm run build
 
   mobile:

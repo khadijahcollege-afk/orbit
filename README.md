@@ -44,7 +44,14 @@ node server/backup.mjs   # backup + verifikasi restore (juga otomatis harian)
 Semua via `app/.env` (di-gitignore): `OPENAI_BASE_URL`, `OPENAI_API_KEY`,
 `OPENAI_UA`, `GEMINI_API_KEY`, `AI_PROVIDER` (openai-responses|gemini|local),
 `AI_COOLDOWN_MS`, `MIDTRANS_SERVER_KEY` + `MIDTRANS_ENV` (gateway pembayaran —
-tanpa kunci → mode mock), `CORS_ORIGIN`. Mobile: `EXPO_PUBLIC_API_URL`.
+tanpa kunci → mode mock), `CORS_ORIGIN`, `SENTRY_DSN` (error tracking — tanpa
+DSN: no-op). Mobile: `EXPO_PUBLIC_API_URL`.
+
+**Lapisan data** (`ORBIT_DB`): default **SQLite** (nol konfigurasi);
+`ORBIT_DB=pglite` → PostgreSQL embedded untuk uji lokal (skema bootstrap
+otomatis dari blueprint); `ORBIT_DB=pg` + `DATABASE_URL` → Supabase/Postgres
+produksi. Migrasi skema+data: lihat `docs/supabase-migrasi.md`
+(`npm run export:pg` + `npm run verify:pg`).
 
 Status & sisa pekerjaan produksi (Supabase, Sentry, publikasi legal) — lihat
 `blueprint/ORBIT_Blueprint_v1/docs/08-beta-checklist.md` dan catatan sesi.
