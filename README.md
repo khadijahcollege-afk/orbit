@@ -16,17 +16,21 @@ Struktur repo:
 
 **ORBIT** adalah Personal Life Operating System yang menggabungkan manajemen dokumen, asisten AI, dan life management dalam satu platform:
 
-- **📄 Manajemen Dokumen** — Upload, klasifikasi, dan ekstraksi data dari dokumen dengan pipeline otomatis
-- **🔍 Hybrid Search** — Pencarian cerdas menggunakan keyword + vector embedding
-- **🤖 Asisten AI (RAG)** — Jawaban AI berbasis data tersimpan dengan sitasi sumber
-- **✅ Approval Workflow** — Semua aksi otomatis memerlukan persetujuan pengguna
-- **📅 Tasks & Reminders** — Manajemen tugas dan pengingat dengan scheduler otomatis
-- **📊 Dashboard** — Agregat data dan metrik penggunaan
-- **🎯 Life Event Engine** — Buat rencana dari satu kalimat (move, travel, wedding, dll)
-- **🔐 Auth & Security** — Autentikasi aman dengan session management dan workspace isolation
-- **📱 Mobile App** — Aplikasi mobile (Expo) dengan Home, Inbox, Capture, Timeline, Assistant
-- **💳 Freemium** — Sistem paket Free/Plus dengan kuota dan usage tracking
-- **🔄 Backup & Export** — Backup database otomatis dan export data ke JSON
+- **Manajemen Dokumen** — Upload, klasifikasi, dan ekstraksi data dari dokumen dengan pipeline otomatis
+- **Hybrid Search** — Pencarian cerdas menggunakan keyword + vector embedding
+- **Asisten AI (RAG)** — Jawaban AI berbasis data tersimpan dengan sitasi sumber
+- **Approval Workflow** — Semua aksi otomatis memerlukan persetujuan pengguna
+- **Tasks & Reminders** — Manajemen tugas dan pengingat dengan scheduler otomatis
+- **Dashboard** — Agregat data dan metrik penggunaan
+- **Life Event Engine** — Buat rencana dari satu kalimat (move, travel, wedding, dll)
+- **Auth & Security** — Autentikasi aman dengan session management dan workspace isolation
+- **Mobile App** — Aplikasi mobile (Expo) dengan Home, Inbox, Capture, Timeline, Assistant
+- **Freemium** — Sistem paket Free/Plus dengan kuota dan usage tracking
+- **Backup & Export** — Backup database otomatis dan export data ke JSON
+
+![ORBIT Home](docs/screenshots/orbit-home.png)
+
+![ORBIT Console](docs/screenshots/orbit-console.png)
 
 ## Menjalankan (lokal)
 
