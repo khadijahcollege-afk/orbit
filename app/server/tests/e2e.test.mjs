@@ -264,8 +264,12 @@ test('riwayat percakapan: daftar + baca ulang lintas sesi', async () => {
   const roles = full.data.messages.map((m) => m.role)
   assert.ok(roles.includes('user') && roles.includes('assistant'), 'peran lengkap')
   assert.ok(full.data.messages.some((m) => m.role === 'assistant' && m.citations.length >= 1), 'sitasi ikut tersimpan')
-  // isolasi: pengguna lain tidak bisa membuka percakapan workspace A
+  // isolasi: pengguna lain tidak bisa membuka/menghapus percakapan workspace A
   await call(`/assistant/conversations/${conv.id}`, { token: S.B.token, status: 404 })
+  await call(`/assistant/conversations/${conv.id}`, { method: 'DELETE', token: S.B.token, status: 404 })
+  // penghapusan oleh pemilik: baca ulang → 404, pesan ikut hilang
+  await call(`/assistant/conversations/${conv.id}`, { method: 'DELETE', token: S.A.token, status: 204 })
+  await call(`/assistant/conversations/${conv.id}`, { token: S.A.token, status: 404 })
 })
 
 test('refusal: pertanyaan tanpa dasar → insufficient_data + tanpa sitasi', async () => {

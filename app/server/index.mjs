@@ -61,6 +61,10 @@ const corsHeaders = {
   'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
   'access-control-allow-headers': 'content-type,authorization,x-request-id,idempotency-key',
   'access-control-max-age': '86400',
+  // hardening dasar (docs/05): berlaku untuk semua respons
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'strict-origin-when-cross-origin',
 }
 
 function fail(res, err) {
@@ -595,6 +599,13 @@ route(/^\/api\/v1\/assistant\/conversations\/([0-9a-f-]{36})$/, async (req, res,
   const conv = db.prepare('SELECT * FROM conversations WHERE id = ?').get(ctx.params[0])
   if (!conv || !requireMembership(user.id, conv.workspace_id, 'viewer')) {
     throw new HttpError(404, 'not_found', 'Percakapan tidak ada')
+  }
+  // Hapus percakapan (docs/05: pengguna menguasai datanya) — pesan ikut kaskade.
+  if (req.method === 'DELETE') {
+    db.prepare('DELETE FROM conversations WHERE id = ?').run(conv.id)
+    logActivity(conv.workspace_id, user.id, 'conversation.deleted', 'conversation', conv.id)
+    json(res, 204, {})
+    return
   }
   if (req.method !== 'GET') throw new HttpError(405, 'validation_error', 'Method tidak didukung')
   const messages = db

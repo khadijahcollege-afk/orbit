@@ -662,6 +662,22 @@ function AssistantTab({ token, ws }: { token: string; ws: string }) {
     [token],
   )
 
+  const deleteConv = useCallback(
+    async (id: string) => {
+      try {
+        await api(`/assistant/conversations/${id}`, { method: 'DELETE', token })
+        if (convId === id) {
+          setConvId(null)
+          setMsgs([])
+        }
+        loadConvs()
+      } catch {
+        /* biarkan */
+      }
+    },
+    [token, convId, loadConvs],
+  )
+
   useEffect(() => {
     loadConvs()
   }, [loadConvs])
@@ -768,17 +784,28 @@ function AssistantTab({ token, ws }: { token: string; ws: string }) {
           <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
             <span className="text-[10px] font-bold tracking-widest text-muted-foreground">RIWAYAT:</span>
             {convs.slice(0, 6).map((c) => (
-              <button
-                key={c.id}
-                onClick={() => openConv(c.id)}
-                title={c.preview}
-                className={cn(
-                  'max-w-[180px] truncate rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                  c.id === convId ? 'border-primary/60 bg-primary/15 text-foreground' : 'border-border text-muted-foreground hover:bg-muted',
+              <span key={c.id} className="inline-flex items-center">
+                <button
+                  onClick={() => openConv(c.id)}
+                  title={c.preview}
+                  className={cn(
+                    'max-w-[180px] truncate rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                    c.id === convId ? 'border-primary/60 bg-primary/15 text-foreground' : 'border-border text-muted-foreground hover:bg-muted',
+                  )}
+                >
+                  {c.title || c.preview || 'Percakapan'}
+                </button>
+                {c.id === convId && (
+                  <button
+                    onClick={() => deleteConv(c.id)}
+                    aria-label="Hapus percakapan"
+                    title="Hapus percakapan"
+                    className="ml-0.5 rounded-full border border-border p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 )}
-              >
-                {c.title || c.preview || 'Percakapan'}
-              </button>
+              </span>
             ))}
             <button
               onClick={() => {
